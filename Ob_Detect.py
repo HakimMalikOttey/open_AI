@@ -1,47 +1,81 @@
-import cv2
-#from picamera.array import PiGBArray
-from imageai.Detection import VideoObjectDetection
-import os
+#from pyimagesearch.tempimage import TempImage
+#from picamera.array import PiRGBArray
+#from picamera import PiCamera
+from imutils.video import VideoStream
 import argparse
+import datetime
+import warnings
 import imutils
-from imutils.video import FPS
+import time
+import cv2
+import json
 
-execution_path = os.getcwd()
-detector = VideoObjectDetection()
-detector.setModelTypeAsYOLOv3()
-detector.setModelPath( os.path.join(execution_path , "yolo.h5"))
-detector.loadModel()
-video_capture = cv2.VideoCapture(0)
-#construct the argument parser and parse the arguments
+# construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
 ap.add_argument("-v", "--video", help="path to the video file")
-ap.add_argument("-a", "--min-area", type=int, default= 300, help="minimum area size")
+ap.add_argument("-a", "--min-area", type=int, default=600, help="minimum area size")
+#ap.add_argument()
+#ap.add_argument("-c", "--conf", required = True, help = "path to the JSON configuration file")
 args = vars(ap.parse_args())
-# initialize the first frame in the video stream. Do no place in While True, as that would deactivate object recognition
-firstframe = None
-while True:
-    fps = FPS().start()
-    ret,frame = video_capture.read()
-    #Window size and image blur
-    frame = imutils.resize(frame, width = 400)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray,(21,21),0)
-    #If the first frame is none, initialize it
-    if firstframe is None:
-        firstframe = gray
-        continue
-    frameDelta = cv2.absdiff(firstframe,gray)
-    thresh = cv2.threshold(frameDelta,25,255,cv2.THRESH_BINARY)[1]
-    thresh = cv2.dilate(thresh,None,iterations=2)
-    contour = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-    contour = imutils.grab_contours(contour)
+#warnings.filterwarnings("ignore")
+#conf = json.load(open(args["conf"]))
 
-    for c in contour:
-        #If countour is too small
+# if the video argument is None, then we are reading from webcam
+if args.get("video", None) is None:
+    vs = VideoStream(src=0).start()
+    time.sleep(2.0)
+
+# otherwise, we are reading from a video file
+else:
+    vs = cv2.VideoCapture(args["video"])
+# initialize the first frame in the video stream
+firstFrame = None
+# loop over the frames of the video
+while True:
+    # grab the current frame and initialize the occupied/unoccupied
+    # text
+    frame = vs.read()
+    text = "No Movement"
+    # if the frame could not be grabbed, then we have reached the end
+    # of the video
+    if frame is None:
+        break
+
+    # resize the frame, convert it to grayscale, and blur it
+    frame = imutils.resize(frame, width=600)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (305, 305), 0)
+    # if the first frame is None, initialize it
+    if firstFrame is None:
+        #firstFrame = gray.copy().astype("float")
+        firstFrame = gray
+        #vs.truncate(0)
+        continue
+        # compute the absolute difference between the current frame and
+        # first frame
+    #cv2.accumulateWeighted(gray,firstFrame,0.5)
+    frameDelta = cv2.absdiff(gray, cv2.convertScaleAbs(firstFrame))
+    thresh = cv2.threshold(frameDelta,25,255, cv2.THRESH_BINARY)[1]
+    thresh = cv2.dilate(thresh, None, iterations=2)
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+
+    # loop over the contours
+    for c in cnts:
+        # if the contour is too small, ignore it
         if cv2.contourArea(c) < args["min_area"]:
+            text = "No movement"
             continue
-        # draws box around detected object
-        (x, y, w, h) = cv2.boundingRect(c)
-        cv2.rectangle(frame,(x,y), ( x + w, y +h), (0,225,0),2)
-        #detections = detector.detectObjectsFromVideo(camera_input = video_capture,output_file_path=os.path.join(execution_path, "camera_detected_1"),frames_per_second=29, log_progress=True)
-    cv2.imshow("Video", frame)
+        else:
+            text = "Movement"
+            # compute the bounding box for the contour, draw it on the frame,
+            # and update the text
+            (x, y, w, h) = cv2.boundingRect(c)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 100, 0), 2)
+    # draw the text and timestamp on the frame
+    cv2.putText(frame, "Room Status: {}".format(text), (10, 20),cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),(10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+    # show the frame and record if the user presses a key
+    cv2.imshow("Object Detection", frame)
+    #Do not remove. Neccessary for camera showing feed in window
+    key = cv2.waitKey(1) & 0xFF
